@@ -90,10 +90,22 @@ class Quote0Client:
         try:
             data = status_resp.json()
         except ValueError as error:
-            logger.warning("device_statusのJSON解析に失敗しました: %s", error)
+            logger.warning("device_status の JSON 解析に失敗しました: %s", error)
             return None
 
-        image_url = (data.get("renderInfo") or {}).get("current", {}).get("image")
+        if not isinstance(data, dict):
+            logger.warning("device_status のレスポンスが辞書形式ではありません。")
+            return None
+
+        render_info = data.get("renderInfo")
+        if not isinstance(render_info, dict):
+            render_info = {}
+
+        current = render_info.get("current")
+        if not isinstance(current, dict):
+            current = {}
+
+        image_url = current.get("image")
         if not image_url:
             logger.warning("renderInfo.current.image の URL が見つかりません。")
             return None

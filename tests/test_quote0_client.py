@@ -82,6 +82,21 @@ def test_get_current_image_returns_none_when_url_missing(monkeypatch):
     assert client.get_current_image("device-1") is None
 
 
+def test_get_current_image_returns_none_when_json_not_dict(monkeypatch):
+    """device_status の JSON が dict 以外(null やリスト等)の場合は None を返す。"""
+    client = Quote0Client("dummy-token")
+
+    status_resp = _FakeResponse(status_code=200, json_data=None)
+    monkeypatch.setattr(client, "device_status", lambda device_id: status_resp)
+
+    assert client.get_current_image("device-1") is None
+
+    status_resp_list = _FakeResponse(status_code=200, json_data=["unexpected", "list"])
+    monkeypatch.setattr(client, "device_status", lambda device_id: status_resp_list)
+
+    assert client.get_current_image("device-1") is None
+
+
 def test_get_current_image_returns_none_when_download_fails(monkeypatch):
     """画像ダウンロードが失敗した場合は None を返す。"""
     client = Quote0Client("dummy-token")
