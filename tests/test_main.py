@@ -1,4 +1,5 @@
 """main.py の push 間隔判定ロジックのテスト。"""
+import base64
 import logging
 
 import main
@@ -115,3 +116,26 @@ def test_push_pushes_when_current_image_unavailable(monkeypatch):
 
     assert called["push_image"][0] == "device-1"
     assert result_last_push_at == 200.0
+
+
+def test_render_encode_compare_roundtrip_is_consistent():
+    """render_image → image_to_base64_png → images_equal を実物同士で通す統合テスト。
+
+    push_rows の他のテストは render_image / images_equal をすべてモックしているため、
+    実際のレンダリング結果が base64 エンコード→デコードを経ても画素単位で一致する
+    (= Issue #3 の「同一表示ならpushしない」判定が成立する)ことを検証できていない。
+    このテストでは実装をモックせず、実画像同士で一致/不一致の両方を確認する。
+    """
+    rows_a = [{"time": "01/01 00:00", "anm": "テスト", "mag": "3", "maxi": "1", "coord": None}]
+    rows_b = [{"time": "02/02 12:34", "anm": "テスト2", "mag": "5", "maxi": "3", "coord": None}]
+
+    img_a = main.render_image(rows_a)
+    png_b64_a = main.image_to_base64_png(img_a)
+    png_bytes_a = base64.b64decode(png_b64_a)
+
+    assert main.images_equal(img_a, png_bytes_a) is True
+
+    img_b = main.render_image(rows_b)
+    png_bytes_b = base64.b64decode(main.image_to_base64_png(img_b))
+
+    assert main.images_equal(img_a, png_bytes_b) is False
