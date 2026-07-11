@@ -39,8 +39,11 @@ def push_rows(
     """current_rows を画像化し、必要であれば Quote/0 へ push する。
 
     現在デバイスに表示されている画像と、新しく描画しようとしている画像が
-    完全に一致する場合は push 自体をスキップする(表示内容取得に失敗した
-    場合は fail-open で通常通り push する)。
+    完全に一致する場合は push 自体をスキップする
+    (表示内容取得に失敗した場合は fail-open で通常通り push する)。
+
+    HTTP 通信を伴う同期処理のため、呼び出し側は asyncio.to_thread 経由で
+    呼び出し、イベントループをブロックしないこと。
 
     Returns:
         push を実行して成功した場合は更新後の last_push_at、
@@ -87,14 +90,16 @@ async def run(config: Config) -> None:
     last_push_at: float | None = None
 
     if rows:
-        last_push_at = push_rows(client, config, rows, last_push_at)
+        last_push_at = await asyncio.to_thread(push_rows, client, config, rows, last_push_at)
 
     logger.info("WebSocket 監視を開始します。")
     stream = EarthquakeStream()
     async for new_row in stream.listen():
         rows = ([new_row] + rows)[: config.entry_count]
         if should_push(last_push_at, time.monotonic(), config.min_push_interval_sec):
-            last_push_at = push_rows(client, config, rows, last_push_at)
+            last_push_at = await asyncio.to_thread(
+                push_rows, client, config, rows, last_push_at
+            )
         else:
             logger.info("push 最小間隔内のため、今回の新着は描画を保留します。")
 

@@ -90,9 +90,9 @@ def test_images_equal_false_for_undecodable_bytes():
 def test_images_equal_false_for_truncated_png_body():
     """ヘッダーは有効だが本体が壊れた PNG では False を返す(例外は送出しない)。
 
-    Image.open() はヘッダーのみを解析する遅延評価のため、本体を
-    切り詰めたバイト列でも Image.open() 自体は成功する。ピクセル本体を
-    実際にデコードする経路(.convert 等)まで例外を捕捉できているかを
+    Image.open() はヘッダーのみを解析する遅延評価のため、本体を切り詰めた
+    バイト列でも Image.open() 自体は成功する。ピクセル本体を実際に
+    デコードする経路(.convert 等)まで例外を捕捉できているかを
     このテストで検証する。
     """
     img_a = _solid_image(0)

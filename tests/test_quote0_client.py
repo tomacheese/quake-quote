@@ -1,5 +1,6 @@
 """quote0_client.py の環境変数読み込みに関するテスト。"""
 import pytest
+import requests
 
 import quote0_client
 from quote0_client import Quote0Client
@@ -93,6 +94,20 @@ def test_get_current_image_returns_none_when_json_not_dict(monkeypatch):
 
     status_resp_list = _FakeResponse(status_code=200, json_data=["unexpected", "list"])
     monkeypatch.setattr(client, "device_status", lambda device_id: status_resp_list)
+
+    assert client.get_current_image("device-1") is None
+
+
+def test_get_current_image_returns_none_when_device_status_raises(monkeypatch):
+    """device_status がネットワークエラーで例外を送出した場合も None を返す
+    (fail-open。呼び出し側で例外を伝播させて落とさない)。
+    """
+    client = Quote0Client("dummy-token")
+
+    def _raise_connection_error(device_id):
+        raise requests.ConnectionError("connection refused")
+
+    monkeypatch.setattr(client, "device_status", _raise_connection_error)
 
     assert client.get_current_image("device-1") is None
 

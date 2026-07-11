@@ -201,8 +201,8 @@ def images_equal(img: Image.Image, other_png_bytes: bytes) -> bool:
     (呼び出し側からは「同一ではない」として扱わせる)。
 
     Image.open() は遅延評価でヘッダーしか読まないため、ピクセル本体の
-    デコード(.load()/.convert())も含めて try 内で行い、本体が
-    壊れている場合も例外を外へ漏らさず False にする。
+    デコード処理(.load()/.convert())も try 内で行う。
+    本体が壊れている場合も例外を外へ漏らさず False にする。
     """
     try:
         other = Image.open(io.BytesIO(other_png_bytes))

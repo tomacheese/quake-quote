@@ -31,6 +31,8 @@ API_ENDPOINT = "https://dot.mindreset.tech/api"
 # Quote/0 の画面解像度 (2.66インチ e-ink)
 DISPLAY_WIDTH = 296
 DISPLAY_HEIGHT = 152
+# HTTP リクエストの既定タイムアウト秒数
+DEFAULT_TIMEOUT = 10
 
 
 def get_api_key() -> str:
@@ -59,7 +61,12 @@ class Quote0Client:
         return API_ENDPOINT + path
 
     def _request(self, method: str, path: str, **kwargs) -> requests.Response:
-        """HTTP リクエストを実行して応答を返す。"""
+        """HTTP リクエストを実行して応答を返す。
+
+        呼び出し側が timeout を指定しない場合、ネットワーク不調時に
+        無期限にブロックしないよう DEFAULT_TIMEOUT を既定値として使う。
+        """
+        kwargs.setdefault("timeout", DEFAULT_TIMEOUT)
         resp = self.session.request(method, self._url(path), **kwargs)
         return resp
 
@@ -76,11 +83,15 @@ class Quote0Client:
         """デバイスの現在の表示画像を取得する。
 
         device_status API から renderInfo.current.image の URL を取得し、
-        その画像本体をダウンロードして返す。取得経路のいずれかで失敗した
-        場合(HTTP エラー、レスポンス形式不正、URL 欠落、ダウンロード失敗)は
+        その画像本体をダウンロードして返す。取得経路のどこかで失敗した場合は
         None を返し、呼び出し側で「判定不能」として扱わせる。
         """
-        status_resp = self.device_status(device_id)
+        try:
+            status_resp = self.device_status(device_id)
+        except requests.RequestException as error:
+            logger.warning("device_status の取得に失敗しました: %s", error)
+            return None
+
         if status_resp.status_code >= 400:
             logger.warning(
                 "device_status の取得に失敗しました: HTTP %s", status_resp.status_code
@@ -111,7 +122,7 @@ class Quote0Client:
             return None
 
         try:
-            image_resp = requests.get(image_url, timeout=10)
+            image_resp = requests.get(image_url, timeout=DEFAULT_TIMEOUT)
         except requests.RequestException as error:
             logger.warning("現在の表示画像のダウンロードに失敗しました: %s", error)
             return None

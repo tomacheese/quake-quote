@@ -122,9 +122,10 @@ def test_render_encode_compare_roundtrip_is_consistent():
     """render_image → image_to_base64_png → images_equal を実物同士で通す統合テスト。
 
     push_rows の他のテストは render_image / images_equal をすべてモックしているため、
-    実際のレンダリング結果が base64 エンコード→デコードを経ても画素単位で一致する
-    (= Issue #3 の「同一表示ならpushしない」判定が成立する)ことを検証できていない。
-    このテストでは実装をモックせず、実画像同士で一致/不一致の両方を確認する。
+    実際のレンダリング結果が base64 エンコード→デコードを経ても画素単位で
+    一致する(= Issue #3 の「同一表示ならpushしない」判定が成立する)ことを
+    検証できていない。このテストでは実装をモックせず、実画像同士で一致/不一致の
+    両方を確認する。
     """
     rows_a = [{"time": "01/01 00:00", "anm": "テスト", "mag": "3", "maxi": "1", "coord": None}]
     rows_b = [{"time": "02/02 12:34", "anm": "テスト2", "mag": "5", "maxi": "3", "coord": None}]
