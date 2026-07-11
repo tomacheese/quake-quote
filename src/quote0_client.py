@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import sys
 from pathlib import Path
@@ -23,6 +24,8 @@ import requests
 from dotenv import load_dotenv
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 API_ENDPOINT = "https://dot.mindreset.tech/api"
 # Quote/0 の画面解像度 (2.66インチ e-ink)
@@ -68,6 +71,47 @@ class Quote0Client:
     def device_status(self, device_id: str):
         """デバイスのステータスを取得する。"""
         return self._request("GET", f"/authV2/open/device/{device_id}/status")
+
+    def get_current_image(self, device_id: str) -> bytes | None:
+        """デバイスの現在の表示画像を取得する。
+
+        device_status API から renderInfo.current.image の URL を取得し、
+        その画像本体をダウンロードして返す。取得経路のいずれかで失敗した
+        場合(HTTP エラー、レスポンス形式不正、URL 欠落、ダウンロード失敗)は
+        None を返し、呼び出し側で「判定不能」として扱わせる。
+        """
+        status_resp = self.device_status(device_id)
+        if status_resp.status_code >= 400:
+            logger.warning(
+                "device_status の取得に失敗しました: HTTP %s", status_resp.status_code
+            )
+            return None
+
+        try:
+            data = status_resp.json()
+        except ValueError as error:
+            logger.warning("device_statusのJSON解析に失敗しました: %s", error)
+            return None
+
+        image_url = (data.get("renderInfo") or {}).get("current", {}).get("image")
+        if not image_url:
+            logger.warning("renderInfo.current.image の URL が見つかりません。")
+            return None
+
+        try:
+            image_resp = requests.get(image_url, timeout=10)
+        except requests.RequestException as error:
+            logger.warning("現在の表示画像のダウンロードに失敗しました: %s", error)
+            return None
+
+        if image_resp.status_code >= 400:
+            logger.warning(
+                "現在の表示画像のダウンロードに失敗しました: HTTP %s",
+                image_resp.status_code,
+            )
+            return None
+
+        return image_resp.content
 
     def device_settings_get(self, device_id: str):
         """デバイスの設定を取得する。"""
