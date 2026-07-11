@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import sys
 from pathlib import Path
@@ -24,10 +25,14 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+logger = logging.getLogger(__name__)
+
 API_ENDPOINT = "https://dot.mindreset.tech/api"
 # Quote/0 の画面解像度 (2.66インチ e-ink)
 DISPLAY_WIDTH = 296
 DISPLAY_HEIGHT = 152
+# HTTP リクエストの既定タイムアウト秒数
+DEFAULT_TIMEOUT = 10
 
 
 def get_api_key() -> str:
@@ -56,7 +61,12 @@ class Quote0Client:
         return API_ENDPOINT + path
 
     def _request(self, method: str, path: str, **kwargs) -> requests.Response:
-        """HTTP リクエストを実行して応答を返す。"""
+        """HTTP リクエストを実行して応答を返す。
+
+        呼び出し側が timeout を指定しない場合、ネットワーク不調時に
+        無期限にブロックしないよう DEFAULT_TIMEOUT を既定値として使う。
+        """
+        kwargs.setdefault("timeout", DEFAULT_TIMEOUT)
         resp = self.session.request(method, self._url(path), **kwargs)
         return resp
 
@@ -68,6 +78,63 @@ class Quote0Client:
     def device_status(self, device_id: str):
         """デバイスのステータスを取得する。"""
         return self._request("GET", f"/authV2/open/device/{device_id}/status")
+
+    def get_current_image(self, device_id: str) -> bytes | None:
+        """デバイスの現在の表示画像を取得する。
+
+        device_status API から renderInfo.current.image の URL を取得し、
+        その画像本体をダウンロードして返す。取得経路のどこかで失敗した場合は
+        None を返し、呼び出し側で「判定不能」として扱わせる。
+        """
+        try:
+            status_resp = self.device_status(device_id)
+        except requests.RequestException as error:
+            logger.warning("device_status の取得に失敗しました: %s", error)
+            return None
+
+        if status_resp.status_code >= 400:
+            logger.warning(
+                "device_status の取得に失敗しました: HTTP %s", status_resp.status_code
+            )
+            return None
+
+        try:
+            data = status_resp.json()
+        except ValueError as error:
+            logger.warning("device_status の JSON 解析に失敗しました: %s", error)
+            return None
+
+        if not isinstance(data, dict):
+            logger.warning("device_status のレスポンスが辞書形式ではありません。")
+            return None
+
+        render_info = data.get("renderInfo")
+        if not isinstance(render_info, dict):
+            render_info = {}
+
+        current = render_info.get("current")
+        if not isinstance(current, dict):
+            current = {}
+
+        image_url = current.get("image")
+        if not image_url:
+            logger.warning("renderInfo.current.image の URL が見つかりません。")
+            return None
+
+        try:
+            image_resp = requests.get(image_url, timeout=DEFAULT_TIMEOUT)
+        except requests.RequestException as error:
+            logger.warning("現在の表示画像のダウンロードに失敗しました: %s", error)
+            return None
+
+        if image_resp.status_code >= 400:
+            logger.warning(
+                "現在の表示画像のダウンロードに失敗しました: HTTP %s",
+                image_resp.status_code,
+            )
+            return None
+
+        return image_resp.content
 
     def device_settings_get(self, device_id: str):
         """デバイスの設定を取得する。"""
