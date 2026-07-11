@@ -1,7 +1,13 @@
 """earthquake_source.py の純粋関数(ネットワーク非依存部分)のテスト。"""
+import asyncio
+import json
+import logging
+
 import pytest
 
+import earthquake_source
 from earthquake_source import (
+    EarthquakeStream,
     NormalizationError,
     format_max_scale,
     next_backoff_seconds,
@@ -81,3 +87,58 @@ def test_next_backoff_seconds_caps_at_limit():
     """上限(cap)を超えて増加しない。"""
     assert next_backoff_seconds(20.0, cap=30.0) == 30.0
     assert next_backoff_seconds(30.0, cap=30.0) == 30.0
+
+
+class _FakeWebSocket:
+    """websockets.connect() が返す接続オブジェクトを模したスタブ。
+
+    async with 文(__aenter__/__aexit__)と、async for による非同期イテレーション
+    (__aiter__)の両方に対応する。
+    """
+
+    def __init__(self, messages):
+        self._messages = messages
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    def __aiter__(self):
+        return self._iter_messages()
+
+    async def _iter_messages(self):
+        for message in self._messages:
+            yield message
+
+
+def test_listen_logs_on_successful_connect(monkeypatch, caplog):
+    """WebSocket接続に成功した際にINFOログを出力する。"""
+    message = json.dumps({
+        "code": 551,
+        "earthquake": {
+            "time": "2026/07/11 12:34:00",
+            "maxScale": 50,
+            "hypocenter": {
+                "name": "浦河沖", "latitude": 42.1, "longitude": 142.8, "magnitude": 5.2,
+            },
+        },
+    })
+    fake_ws = _FakeWebSocket([message])
+
+    monkeypatch.setattr(earthquake_source.websockets, "connect", lambda url: fake_ws)
+
+    stream = EarthquakeStream()
+    caplog.set_level(logging.INFO)
+
+    async def _consume_one():
+        gen = stream.listen()
+        return await gen.__anext__()
+
+    row = asyncio.run(_consume_one())
+
+    assert row["anm"] == "浦河沖"
+    assert any(
+        "WebSocket に接続しました" in record.message for record in caplog.records
+    )

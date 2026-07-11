@@ -146,6 +146,7 @@ class EarthquakeStream:
             try:
                 async with websockets.connect(self.url) as ws:
                     backoff = 0.0
+                    logger.info("WebSocket に接続しました。")
                     async for raw in ws:
                         try:
                             message = json.loads(raw)
