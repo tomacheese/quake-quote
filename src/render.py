@@ -192,26 +192,30 @@ def render_image(rows: list[dict]) -> Image.Image:
 
 
 def images_equal(img: Image.Image, other_png_bytes: bytes) -> bool:
-    """imgと、PNGバイト列other_png_bytesをデコードした画像が
+    """img と、PNG バイト列 other_png_bytes をデコードした画像が
     ピクセル単位で完全一致するかを判定する。
 
     デバイス側で再エンコードされている可能性があるため、両者とも
     グレースケール("L")モードに変換した上でピクセル値を比較する。
-    サイズが異なる場合や、デコードに失敗した場合はFalseを返す
+    サイズが異なる場合や、デコードに失敗した場合は False を返す
     (呼び出し側からは「同一ではない」として扱わせる)。
+
+    Image.open() は遅延評価でヘッダーしか読まないため、ピクセル本体の
+    デコード(.load()/.convert())も含めて try 内で行い、本体が
+    壊れている場合も例外を外へ漏らさず False にする。
     """
     try:
         other = Image.open(io.BytesIO(other_png_bytes))
-    except Exception:  # noqa: BLE001 デコード失敗の理由を問わず非一致として扱う
+        other_l = other.convert("L")
+
+        img_l = img.convert("L")
+
+        if img_l.size != other_l.size:
+            return False
+
+        return img_l.tobytes() == other_l.tobytes()
+    except Exception:  # デコード失敗の理由を問わず非一致として扱う
         return False
-
-    img_l = img.convert("L")
-    other_l = other.convert("L")
-
-    if img_l.size != other_l.size:
-        return False
-
-    return img_l.tobytes() == other_l.tobytes()
 
 
 def image_to_base64_png(img: Image.Image) -> str:
