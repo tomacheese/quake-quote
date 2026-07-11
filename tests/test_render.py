@@ -1,7 +1,9 @@
 """render.py のレイアウト計算に関するテスト(実機フォント非依存)。"""
+import io
+
 from PIL import Image, ImageDraw, ImageFont
 
-from render import JAPAN_OUTLINE, MapProjector, draw_centered_lines
+from render import HEIGHT, JAPAN_OUTLINE, WIDTH, MapProjector, draw_centered_lines, images_equal
 
 
 def test_map_projector_keeps_points_within_area():
@@ -44,3 +46,42 @@ def test_draw_centered_lines_vertically_centers_content():
     assert bbox is not None
     _, top, _, _ = bbox
     assert abs(top - expected_top) <= 2
+
+
+def _solid_image(color: int) -> Image.Image:
+    """全面が単色(0=黒 or 255=白相当)の296x152グレースケール画像を作る。"""
+    return Image.new("L", (WIDTH, HEIGHT), color=color)
+
+
+def _png_bytes(img: Image.Image) -> bytes:
+    """PIL画像をPNGバイト列に変換する(テスト用ヘルパー)。"""
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def test_images_equal_true_for_identical_content():
+    """同一内容の画像同士はTrueを返す。"""
+    img_a = _solid_image(0)
+    img_b = _solid_image(0)
+    assert images_equal(img_a, _png_bytes(img_b)) is True
+
+
+def test_images_equal_false_for_different_content():
+    """内容が異なる画像同士はFalseを返す。"""
+    img_a = _solid_image(0)
+    img_b = _solid_image(255)
+    assert images_equal(img_a, _png_bytes(img_b)) is False
+
+
+def test_images_equal_false_for_different_size():
+    """サイズが異なる場合はFalseを返す。"""
+    img_a = _solid_image(0)
+    img_b = Image.new("L", (10, 10), color=0)
+    assert images_equal(img_a, _png_bytes(img_b)) is False
+
+
+def test_images_equal_false_for_undecodable_bytes():
+    """デコード不能なバイト列を渡された場合はFalseを返す(例外は送出しない)。"""
+    img_a = _solid_image(0)
+    assert images_equal(img_a, b"not-a-png") is False

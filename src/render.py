@@ -191,6 +191,29 @@ def render_image(rows: list[dict]) -> Image.Image:
     return img
 
 
+def images_equal(img: Image.Image, other_png_bytes: bytes) -> bool:
+    """imgと、PNGバイト列other_png_bytesをデコードした画像が
+    ピクセル単位で完全一致するかを判定する。
+
+    デバイス側で再エンコードされている可能性があるため、両者とも
+    グレースケール("L")モードに変換した上でピクセル値を比較する。
+    サイズが異なる場合や、デコードに失敗した場合はFalseを返す
+    (呼び出し側からは「同一ではない」として扱わせる)。
+    """
+    try:
+        other = Image.open(io.BytesIO(other_png_bytes))
+    except Exception:  # noqa: BLE001 デコード失敗の理由を問わず非一致として扱う
+        return False
+
+    img_l = img.convert("L")
+    other_l = other.convert("L")
+
+    if img_l.size != other_l.size:
+        return False
+
+    return img_l.tobytes() == other_l.tobytes()
+
+
 def image_to_base64_png(img: Image.Image) -> str:
     """PIL画像をPNGのBase64文字列に変換する(push-image APIへの送信用)。"""
     buf = io.BytesIO()
