@@ -83,6 +83,39 @@ def test_get_current_image_returns_none_when_url_missing(monkeypatch):
     assert client.get_current_image("device-1") is None
 
 
+def test_get_current_image_supports_image_as_list(monkeypatch):
+    """renderInfo.current.image が配列で返された場合、先頭要素を URL として使う。"""
+    client = Quote0Client("dummy-token")
+
+    status_resp = _FakeResponse(
+        status_code=200,
+        json_data={
+            "renderInfo": {"current": {"image": ["https://example.com/current.png"]}}
+        },
+    )
+    monkeypatch.setattr(client, "device_status", lambda device_id: status_resp)
+
+    download_resp = _FakeResponse(status_code=200, content=b"png-bytes")
+    monkeypatch.setattr(
+        quote0_client.requests, "get", lambda url, timeout=10: download_resp
+    )
+
+    assert client.get_current_image("device-1") == b"png-bytes"
+
+
+def test_get_current_image_returns_none_when_image_is_empty_list(monkeypatch):
+    """renderInfo.current.image が空配列の場合は None を返す。"""
+    client = Quote0Client("dummy-token")
+
+    status_resp = _FakeResponse(
+        status_code=200,
+        json_data={"renderInfo": {"current": {"image": []}}},
+    )
+    monkeypatch.setattr(client, "device_status", lambda device_id: status_resp)
+
+    assert client.get_current_image("device-1") is None
+
+
 def test_get_current_image_returns_none_when_json_not_dict(monkeypatch):
     """device_status の JSON が dict 以外(null やリスト等)の場合は None を返す。"""
     client = Quote0Client("dummy-token")

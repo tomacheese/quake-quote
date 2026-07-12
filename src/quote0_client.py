@@ -117,7 +117,12 @@ class Quote0Client:
             current = {}
 
         image_url = current.get("image")
-        if not image_url:
+        if isinstance(image_url, list):
+            # API が単一 URL ではなく ["https://..."] のように配列で
+            # 返す場合があるため、その場合は先頭要素を URL として扱う。
+            image_url = image_url[0] if image_url else None
+
+        if not isinstance(image_url, str) or not image_url:
             logger.warning("renderInfo.current.image の URL が見つかりません。")
             return None
 
