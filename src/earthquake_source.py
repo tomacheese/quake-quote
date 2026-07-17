@@ -3,7 +3,7 @@
 起動時の初期値は JMA の地震情報リスト (list.json) を1回だけ取得して埋め、
 以後は P2P地震情報 (https://www.p2pquake.net/) の WebSocket から
 リアルタイムに新着イベントを受信する。両者は入力スキーマが異なるが、
-出力はどちらも同じ行データ形式 (time/anm/mag/maxi/coord) に正規化する。
+出力はどちらも同じ行データ形式 (time/anm/mag/maxi/coord/depth) に正規化する。
 """
 from __future__ import annotations
 
@@ -48,6 +48,22 @@ def parse_jma_coordinate(cod: str) -> tuple[float, float] | None:
     return lat, lon
 
 
+def parse_jma_depth(cod: str) -> int | None:
+    """JMAの `cod` フィールド(例: "+37.3+139.1-10000/")から深さを取り出す。
+
+    緯度・経度に続く3番目の符号付き数値がメートル単位の深さで、
+    符号は地下方向を表すため反転されている(例: -10000 は深さ10km)。
+    第3の数値が存在しない(欠測)場合は None を返す。
+    """
+    m = re.match(
+        r"^([+-]\d+(?:\.\d+)?)([+-]\d+(?:\.\d+)?)([+-]\d+(?:\.\d+)?)", cod or ""
+    )
+    if not m:
+        return None
+    depth_m = float(m.group(3))
+    return round(abs(depth_m) / 1000)
+
+
 def _format_jma_row(item: dict) -> dict:
     """JMA list.json の1件を行データ形式に整形する。"""
     at = datetime.datetime.fromisoformat(item["at"])
@@ -58,6 +74,7 @@ def _format_jma_row(item: dict) -> dict:
         "mag": item.get("mag", "-"),
         "maxi": item.get("maxi", "-"),
         "coord": parse_jma_coordinate(item.get("cod", "")),
+        "depth": format_depth(parse_jma_depth(item.get("cod", ""))),
     }
 
 
@@ -81,11 +98,19 @@ def format_max_scale(max_scale: int) -> str:
     return MAX_SCALE_TABLE.get(max_scale, "-")
 
 
+def format_depth(depth_km: int | None) -> str:
+    """震源の深さ(km)を表示用文字列に変換する。
+
+    不明な値(欠測など)の場合は "-" を返す。
+    """
+    return "-" if depth_km is None else str(depth_km)
+
+
 def normalize_p2pquake_message(message: dict) -> dict:
     """P2P地震情報 WS の code:551 メッセージを行データ形式に変換する。
 
     行データ形式は fetch_seed_earthquakes が返す形式と共通
-    (time/anm/mag/maxi/coord)。
+    (time/anm/mag/maxi/coord/depth)。
 
     Raises:
         NormalizationError: 震源名または発生時刻が欠落している場合。
@@ -114,12 +139,16 @@ def normalize_p2pquake_message(message: dict) -> dict:
     mag = hypocenter.get("magnitude", -1)
     mag_str = str(mag) if mag is not None and mag != -1 else "-"
 
+    depth = hypocenter.get("depth", -1)
+    depth = None if depth is None or depth == -1 else depth
+
     return {
         "time": time_str,
         "anm": name,
         "mag": mag_str,
         "maxi": format_max_scale(earthquake.get("maxScale", -1)),
         "coord": coord,
+        "depth": format_depth(depth),
     }
 
 

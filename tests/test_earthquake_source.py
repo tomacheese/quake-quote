@@ -9,10 +9,12 @@ import earthquake_source
 from earthquake_source import (
     EarthquakeStream,
     NormalizationError,
+    format_depth,
     format_max_scale,
     next_backoff_seconds,
     normalize_p2pquake_message,
     parse_jma_coordinate,
+    parse_jma_depth,
 )
 
 
@@ -24,6 +26,52 @@ def test_parse_jma_coordinate_extracts_lat_lon():
 def test_parse_jma_coordinate_returns_none_for_unknown():
     """空文字列など座標不明の場合は None を返す。"""
     assert parse_jma_coordinate("") is None
+
+
+def test_parse_jma_depth_extracts_depth_in_km():
+    """JMAのcodフィールドから深さをkm単位で取り出せる(メートル→km変換、符号反転)。"""
+    assert parse_jma_depth("+37.3+139.1-10000/") == 10
+
+
+def test_parse_jma_depth_handles_shallow_depth():
+    """深さ0(ごく浅い)は不明値ではなく0として取り出せる。"""
+    assert parse_jma_depth("+37.3+139.1+0/") == 0
+
+
+def test_parse_jma_depth_returns_none_when_missing():
+    """深さの数値が無い(第3値欠測)場合はNoneを返す。"""
+    assert parse_jma_depth("+37.3+139.1/") is None
+
+
+def test_parse_jma_depth_returns_none_for_empty_string():
+    """空文字列の場合はNoneを返す。"""
+    assert parse_jma_depth("") is None
+
+
+def test_format_jma_row_includes_depth():
+    """JMAの1件データにdepthキー(km文字列)が追加される。"""
+    item = {
+        "at": "2026-07-11T12:34:00+09:00",
+        "anm": "浦河沖",
+        "mag": 5.2,
+        "maxi": "5+",
+        "cod": "+42.1+142.8-10000/",
+    }
+    row = earthquake_source._format_jma_row(item)
+    assert row["depth"] == "10"
+
+
+def test_format_jma_row_depth_unknown_when_cod_missing_third_value():
+    """codフィールドに深さの数値が無い場合、depthは"-"になる。"""
+    item = {
+        "at": "2026-07-11T12:34:00+09:00",
+        "anm": "浦河沖",
+        "mag": 5.2,
+        "maxi": "5+",
+        "cod": "+42.1+142.8/",
+    }
+    row = earthquake_source._format_jma_row(item)
+    assert row["depth"] == "-"
 
 
 @pytest.mark.parametrize(
@@ -38,8 +86,68 @@ def test_format_max_scale(max_scale, expected):
     assert format_max_scale(max_scale) == expected
 
 
+@pytest.mark.parametrize(
+    "depth_km,expected",
+    [(10, "10"), (0, "0"), (50, "50"), (None, "-")],
+)
+def test_format_depth(depth_km, expected):
+    """深さ(km)が表示用文字列に変換される。Noneは不明値として"-"になる。"""
+    assert format_depth(depth_km) == expected
+
+
 def test_normalize_p2pquake_message_converts_fields():
     """P2P地震情報メッセージが行データ形式に変換される。"""
+    message = {
+        "code": 551,
+        "earthquake": {
+            "time": "2026/07/11 12:34:00",
+            "maxScale": 50,
+            "hypocenter": {
+                "name": "浦河沖",
+                "latitude": 42.1,
+                "longitude": 142.8,
+                "magnitude": 5.2,
+                "depth": 10,
+            },
+        },
+    }
+
+    row = normalize_p2pquake_message(message)
+
+    assert row == {
+        "time": "07/11 12:34",
+        "anm": "浦河沖",
+        "mag": "5.2",
+        "maxi": "5+",
+        "coord": (42.1, 142.8),
+        "depth": "10",
+    }
+
+
+def test_normalize_p2pquake_message_depth_unknown_when_minus_one():
+    """hypocenter.depthが-1(不明)の場合、depthは"-"になる。"""
+    message = {
+        "code": 551,
+        "earthquake": {
+            "time": "2026/07/11 12:34:00",
+            "maxScale": 50,
+            "hypocenter": {
+                "name": "浦河沖",
+                "latitude": 42.1,
+                "longitude": 142.8,
+                "magnitude": 5.2,
+                "depth": -1,
+            },
+        },
+    }
+
+    row = normalize_p2pquake_message(message)
+
+    assert row["depth"] == "-"
+
+
+def test_normalize_p2pquake_message_depth_unknown_when_missing():
+    """hypocenter.depthが無い場合も、depthは"-"になる。"""
     message = {
         "code": 551,
         "earthquake": {
@@ -56,13 +164,7 @@ def test_normalize_p2pquake_message_converts_fields():
 
     row = normalize_p2pquake_message(message)
 
-    assert row == {
-        "time": "07/11 12:34",
-        "anm": "浦河沖",
-        "mag": "5.2",
-        "maxi": "5+",
-        "coord": (42.1, 142.8),
-    }
+    assert row["depth"] == "-"
 
 
 def test_normalize_p2pquake_message_raises_when_name_missing():
