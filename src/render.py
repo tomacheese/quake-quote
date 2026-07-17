@@ -100,6 +100,38 @@ class MapProjector:
         return px, py
 
 
+def truncate_to_width(
+    draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont, max_width: int
+) -> str:
+    """text が max_width(px) に収まるよう、末尾を "…" で省略して切り詰める。
+
+    震源名は長さが可変で、深さの追加により行全体が画面幅を超えることが
+    あるため、名前部分だけを削って行全体を必ず max_width 以内に収める。
+    """
+    if draw.textlength(text, font=font) <= max_width:
+        return text
+    ellipsis = "…"
+    truncated = text
+    while truncated and draw.textlength(truncated + ellipsis, font=font) > max_width:
+        truncated = truncated[:-1]
+    return (truncated + ellipsis) if truncated else ellipsis
+
+
+def build_past_line_text(
+    item: dict, draw: ImageDraw.ImageDraw, font: ImageFont.FreeTypeFont, max_width: int
+) -> str:
+    """過去分1件を「日時 震源地名 震度# M# 深さ#km」の1行に組み立てる。
+
+    震源名は長さが可変で、深さの追加分だけ行全体が長くなるため、
+    名前部分だけを切り詰めて行全体が必ず max_width(px) 以内に収まるようにする。
+    """
+    prefix = f"{item['time']} "
+    suffix = f" 震度{item['maxi']} M{item['mag']} 深さ{item['depth']}km"
+    anm_max_width = max_width - draw.textlength(prefix + suffix, font=font)
+    anm = truncate_to_width(draw, item["anm"], font, anm_max_width)
+    return f"{prefix}{anm}{suffix}"
+
+
 def draw_map(draw: ImageDraw.ImageDraw, rows: list[dict]) -> None:
     """右側エリアに簡易日本地図と最新の震源マーカーを描画する。
 
@@ -180,13 +212,10 @@ def render_image(rows: list[dict]) -> Image.Image:
     # 上段右: 簡易日本地図 + 最新の震源マーカー
     draw_map(draw, rows)
 
-    # 下段: 全幅を使って過去分を1行ずつ表示
+    # 下段: 全幅を使って過去分を1行ずつ表示(右余白4px)
+    past_line_max_width = WIDTH - 8 - 4
     past_lines: list[tuple[str, ImageFont.FreeTypeFont, int]] = [
-        (
-            f"{item['time']} {item['anm']} 震度{item['maxi']} M{item['mag']} 深さ{item['depth']}km",
-            font_past,
-            4,
-        )
+        (build_past_line_text(item, draw, font_past, past_line_max_width), font_past, 4)
         for item in past
     ]
     bottom_zone_h = HEIGHT - BOTTOM_ZONE_Y0

@@ -3,7 +3,16 @@ import io
 
 from PIL import Image, ImageDraw, ImageFont
 
-from render import HEIGHT, JAPAN_OUTLINE, WIDTH, MapProjector, draw_centered_lines, images_equal
+from render import (
+    HEIGHT,
+    JAPAN_OUTLINE,
+    WIDTH,
+    MapProjector,
+    build_past_line_text,
+    draw_centered_lines,
+    images_equal,
+    truncate_to_width,
+)
 
 
 def test_map_projector_keeps_points_within_area():
@@ -46,6 +55,64 @@ def test_draw_centered_lines_vertically_centers_content():
     assert bbox is not None
     _, top, _, _ = bbox
     assert abs(top - expected_top) <= 2
+
+
+def test_truncate_to_width_keeps_short_text_unchanged():
+    """max_width に収まる文字列はそのまま返す。"""
+    img = Image.new("1", (200, 50), color=1)
+    draw = ImageDraw.Draw(img)
+    font = ImageFont.load_default()
+    assert truncate_to_width(draw, "AB", font, max_width=1000) == "AB"
+
+
+def test_truncate_to_width_shortens_long_text_with_ellipsis():
+    """max_width を超える文字列は末尾を「…」で切り詰める。"""
+    img = Image.new("1", (200, 50), color=1)
+    draw = ImageDraw.Draw(img)
+    font = ImageFont.load_default()
+    full_width = draw.textlength("ABCDEFGHIJ", font=font)
+
+    result = truncate_to_width(draw, "ABCDEFGHIJ", font, max_width=full_width / 2)
+
+    assert result.endswith("…")
+    assert draw.textlength(result, font=font) <= full_width / 2
+
+
+def test_build_past_line_text_fits_within_max_width_for_long_name():
+    """長い震源名+深さの組み合わせでも、行全体が max_width に収まる(Issue #10)。
+
+    深さ表記の追加により行が長くなるため、震源名を切り詰めて必ず
+    max_width 以内に収まることを実測して確認する。
+    """
+    img = Image.new("1", (WIDTH, HEIGHT), color=1)
+    draw = ImageDraw.Draw(img)
+    font = ImageFont.load_default()
+    item = {
+        "time": "07/11 12:34",
+        "anm": "日向灘及び薩南諸島周辺",
+        "mag": "7.3",
+        "maxi": "6+",
+        "depth": "700",
+    }
+    max_width = 200
+
+    text = build_past_line_text(item, draw, font, max_width)
+
+    assert draw.textlength(text, font=font) <= max_width
+    assert text.endswith("深さ700km")
+    assert "…" in text
+
+
+def test_build_past_line_text_keeps_short_name_untruncated():
+    """短い震源名は max_width に余裕があれば切り詰めない。"""
+    img = Image.new("1", (WIDTH, HEIGHT), color=1)
+    draw = ImageDraw.Draw(img)
+    font = ImageFont.load_default()
+    item = {"time": "07/11 12:34", "anm": "浦河沖", "mag": "5.2", "maxi": "5+", "depth": "10"}
+
+    text = build_past_line_text(item, draw, font, max_width=1000)
+
+    assert text == "07/11 12:34 浦河沖 震度5+ M5.2 深さ10km"
 
 
 def _solid_image(color: int) -> Image.Image:
