@@ -3,7 +3,7 @@
 起動時の初期値は JMA の地震情報リスト (list.json) を1回だけ取得して埋め、
 以後は P2P地震情報 (https://www.p2pquake.net/) の WebSocket から
 リアルタイムに新着イベントを受信する。両者は入力スキーマが異なるが、
-出力はどちらも同じ行データ形式 (time/anm/mag/maxi/coord) に正規化する。
+出力はどちらも同じ行データ形式 (time/anm/mag/maxi/coord/depth) に正規化する。
 """
 from __future__ import annotations
 
@@ -74,6 +74,7 @@ def _format_jma_row(item: dict) -> dict:
         "mag": item.get("mag", "-"),
         "maxi": item.get("maxi", "-"),
         "coord": parse_jma_coordinate(item.get("cod", "")),
+        "depth": format_depth(parse_jma_depth(item.get("cod", ""))),
     }
 
 

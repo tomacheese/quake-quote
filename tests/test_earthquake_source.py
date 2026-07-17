@@ -48,6 +48,32 @@ def test_parse_jma_depth_returns_none_for_empty_string():
     assert parse_jma_depth("") is None
 
 
+def test_format_jma_row_includes_depth():
+    """JMAの1件データにdepthキー(km文字列)が追加される。"""
+    item = {
+        "at": "2026-07-11T12:34:00+09:00",
+        "anm": "浦河沖",
+        "mag": 5.2,
+        "maxi": "5+",
+        "cod": "+42.1+142.8-10000/",
+    }
+    row = earthquake_source._format_jma_row(item)
+    assert row["depth"] == "10"
+
+
+def test_format_jma_row_depth_unknown_when_cod_missing_third_value():
+    """codフィールドに深さの数値が無い場合、depthは"-"になる。"""
+    item = {
+        "at": "2026-07-11T12:34:00+09:00",
+        "anm": "浦河沖",
+        "mag": 5.2,
+        "maxi": "5+",
+        "cod": "+42.1+142.8/",
+    }
+    row = earthquake_source._format_jma_row(item)
+    assert row["depth"] == "-"
+
+
 @pytest.mark.parametrize(
     "max_scale,expected",
     [
