@@ -14,6 +14,7 @@ from earthquake_source import (
     next_backoff_seconds,
     normalize_p2pquake_message,
     parse_jma_coordinate,
+    parse_jma_depth,
 )
 
 
@@ -25,6 +26,26 @@ def test_parse_jma_coordinate_extracts_lat_lon():
 def test_parse_jma_coordinate_returns_none_for_unknown():
     """空文字列など座標不明の場合は None を返す。"""
     assert parse_jma_coordinate("") is None
+
+
+def test_parse_jma_depth_extracts_depth_in_km():
+    """JMAのcodフィールドから深さをkm単位で取り出せる(メートル→km変換、符号反転)。"""
+    assert parse_jma_depth("+37.3+139.1-10000/") == 10
+
+
+def test_parse_jma_depth_handles_shallow_depth():
+    """深さ0(ごく浅い)は不明値ではなく0として取り出せる。"""
+    assert parse_jma_depth("+37.3+139.1+0/") == 0
+
+
+def test_parse_jma_depth_returns_none_when_missing():
+    """深さの数値が無い(第3値欠測)場合はNoneを返す。"""
+    assert parse_jma_depth("+37.3+139.1/") is None
+
+
+def test_parse_jma_depth_returns_none_for_empty_string():
+    """空文字列の場合はNoneを返す。"""
+    assert parse_jma_depth("") is None
 
 
 @pytest.mark.parametrize(

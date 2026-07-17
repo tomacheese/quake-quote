@@ -48,6 +48,22 @@ def parse_jma_coordinate(cod: str) -> tuple[float, float] | None:
     return lat, lon
 
 
+def parse_jma_depth(cod: str) -> int | None:
+    """JMAの `cod` フィールド(例: "+37.3+139.1-10000/")から深さを取り出す。
+
+    緯度・経度に続く3番目の符号付き数値がメートル単位の深さで、
+    符号は地下方向を表すため反転されている(例: -10000 は深さ10km)。
+    第3の数値が存在しない(欠測)場合は None を返す。
+    """
+    m = re.match(
+        r"^([+-]\d+(?:\.\d+)?)([+-]\d+(?:\.\d+)?)([+-]\d+(?:\.\d+)?)", cod or ""
+    )
+    if not m:
+        return None
+    depth_m = float(m.group(3))
+    return round(abs(depth_m) / 1000)
+
+
 def _format_jma_row(item: dict) -> dict:
     """JMA list.json の1件を行データ形式に整形する。"""
     at = datetime.datetime.fromisoformat(item["at"])
