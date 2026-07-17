@@ -107,6 +107,7 @@ def test_normalize_p2pquake_message_converts_fields():
                 "latitude": 42.1,
                 "longitude": 142.8,
                 "magnitude": 5.2,
+                "depth": 10,
             },
         },
     }
@@ -119,7 +120,51 @@ def test_normalize_p2pquake_message_converts_fields():
         "mag": "5.2",
         "maxi": "5+",
         "coord": (42.1, 142.8),
+        "depth": "10",
     }
+
+
+def test_normalize_p2pquake_message_depth_unknown_when_minus_one():
+    """hypocenter.depthが-1(不明)の場合、depthは"-"になる。"""
+    message = {
+        "code": 551,
+        "earthquake": {
+            "time": "2026/07/11 12:34:00",
+            "maxScale": 50,
+            "hypocenter": {
+                "name": "浦河沖",
+                "latitude": 42.1,
+                "longitude": 142.8,
+                "magnitude": 5.2,
+                "depth": -1,
+            },
+        },
+    }
+
+    row = normalize_p2pquake_message(message)
+
+    assert row["depth"] == "-"
+
+
+def test_normalize_p2pquake_message_depth_unknown_when_missing():
+    """hypocenter.depthが無い場合も、depthは"-"になる。"""
+    message = {
+        "code": 551,
+        "earthquake": {
+            "time": "2026/07/11 12:34:00",
+            "maxScale": 50,
+            "hypocenter": {
+                "name": "浦河沖",
+                "latitude": 42.1,
+                "longitude": 142.8,
+                "magnitude": 5.2,
+            },
+        },
+    }
+
+    row = normalize_p2pquake_message(message)
+
+    assert row["depth"] == "-"
 
 
 def test_normalize_p2pquake_message_raises_when_name_missing():

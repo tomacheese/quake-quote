@@ -110,7 +110,7 @@ def normalize_p2pquake_message(message: dict) -> dict:
     """P2P地震情報 WS の code:551 メッセージを行データ形式に変換する。
 
     行データ形式は fetch_seed_earthquakes が返す形式と共通
-    (time/anm/mag/maxi/coord)。
+    (time/anm/mag/maxi/coord/depth)。
 
     Raises:
         NormalizationError: 震源名または発生時刻が欠落している場合。
@@ -139,12 +139,16 @@ def normalize_p2pquake_message(message: dict) -> dict:
     mag = hypocenter.get("magnitude", -1)
     mag_str = str(mag) if mag is not None and mag != -1 else "-"
 
+    depth = hypocenter.get("depth", -1)
+    depth = None if depth is None or depth == -1 else depth
+
     return {
         "time": time_str,
         "anm": name,
         "mag": mag_str,
         "maxi": format_max_scale(earthquake.get("maxScale", -1)),
         "coord": coord,
+        "depth": format_depth(depth),
     }
 
 
