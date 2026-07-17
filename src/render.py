@@ -152,10 +152,10 @@ def render_image(rows: list[dict]) -> Image.Image:
     Canvas API 経由のディザリングによる文字潰れを避けるため、ここでは
     グレースケールを一切使わず、白 or 黒のみで文字を描く。
 
-    上段: 左に最新1件を「日時→震源地→震度(大)→マグニチュード」の
+    上段: 左に最新1件を「日時→震源地→震度(大)→マグニチュード+深さ」の
     順で強調表示し、右に小さめの簡易日本地図と震源マーカーを描く。
     下段: 地図の下に空く余白も活用するため全幅を使い、過去分を
-    「日時 震源地名 震度# M#」の1行で表示する。
+    「日時 震源地名 震度# M# 深さ#km」の1行で表示する。
     """
     latest, past = rows[0], rows[1:]
 
@@ -173,7 +173,7 @@ def render_image(rows: list[dict]) -> Image.Image:
         (latest["time"], font_date, 4),
         (latest["anm"], font_anm, 6),
         (f"震度{latest['maxi']}", font_maxi, 6),
-        (f"M{latest['mag']}", font_mag, 0),
+        (f"M{latest['mag']} 深さ{latest['depth']}km", font_mag, 0),
     ]
     draw_centered_lines(draw, latest_lines, x=8, zone_y0=TOP_ZONE_Y0, zone_h=TOP_ZONE_H)
 
@@ -182,7 +182,11 @@ def render_image(rows: list[dict]) -> Image.Image:
 
     # 下段: 全幅を使って過去分を1行ずつ表示
     past_lines: list[tuple[str, ImageFont.FreeTypeFont, int]] = [
-        (f"{item['time']} {item['anm']} 震度{item['maxi']} M{item['mag']}", font_past, 4)
+        (
+            f"{item['time']} {item['anm']} 震度{item['maxi']} M{item['mag']} 深さ{item['depth']}km",
+            font_past,
+            4,
+        )
         for item in past
     ]
     bottom_zone_h = HEIGHT - BOTTOM_ZONE_Y0

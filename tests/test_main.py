@@ -127,8 +127,12 @@ def test_render_encode_compare_roundtrip_is_consistent():
     検証できていない。このテストでは実装をモックせず、実画像同士で一致/不一致の
     両方を確認する。
     """
-    rows_a = [{"time": "01/01 00:00", "anm": "テスト", "mag": "3", "maxi": "1", "coord": None}]
-    rows_b = [{"time": "02/02 12:34", "anm": "テスト2", "mag": "5", "maxi": "3", "coord": None}]
+    rows_a = [
+        {"time": "01/01 00:00", "anm": "テスト", "mag": "3", "maxi": "1", "coord": None, "depth": "10"},
+    ]
+    rows_b = [
+        {"time": "02/02 12:34", "anm": "テスト2", "mag": "5", "maxi": "3", "coord": None, "depth": "-"},
+    ]
 
     img_a = main.render_image(rows_a)
     png_b64_a = main.image_to_base64_png(img_a)
