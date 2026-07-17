@@ -9,6 +9,7 @@ import earthquake_source
 from earthquake_source import (
     EarthquakeStream,
     NormalizationError,
+    format_depth,
     format_max_scale,
     next_backoff_seconds,
     normalize_p2pquake_message,
@@ -36,6 +37,15 @@ def test_parse_jma_coordinate_returns_none_for_unknown():
 def test_format_max_scale(max_scale, expected):
     """maxScaleの数値コードが表示用文字列に変換される。"""
     assert format_max_scale(max_scale) == expected
+
+
+@pytest.mark.parametrize(
+    "depth_km,expected",
+    [(10, "10"), (0, "0"), (50, "50"), (None, "-")],
+)
+def test_format_depth(depth_km, expected):
+    """深さ(km)が表示用文字列に変換される。Noneは不明値として"-"になる。"""
+    assert format_depth(depth_km) == expected
 
 
 def test_normalize_p2pquake_message_converts_fields():

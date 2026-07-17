@@ -81,6 +81,14 @@ def format_max_scale(max_scale: int) -> str:
     return MAX_SCALE_TABLE.get(max_scale, "-")
 
 
+def format_depth(depth_km: int | None) -> str:
+    """震源の深さ(km)を表示用文字列に変換する。
+
+    不明な値(欠測など)の場合は "-" を返す。
+    """
+    return "-" if depth_km is None else str(depth_km)
+
+
 def normalize_p2pquake_message(message: dict) -> dict:
     """P2P地震情報 WS の code:551 メッセージを行データ形式に変換する。
 
