@@ -144,3 +144,35 @@ def test_render_encode_compare_roundtrip_is_consistent():
     png_bytes_b = base64.b64decode(main.image_to_base64_png(img_b))
 
     assert main.images_equal(img_a, png_bytes_b) is False
+
+
+def test_main_does_not_init_sentry_when_dsn_unset(monkeypatch):
+    """SENTRY_DSN が未設定の場合、sentry_sdk.init は呼ばれない。"""
+    monkeypatch.delenv("SENTRY_DSN", raising=False)
+    monkeypatch.setenv("DOT_APP_API_TOKEN", "dummy-token")
+    monkeypatch.setenv("DOT_DEVICE_ID", "dummy-device-id")
+
+    called = {"init": False}
+    monkeypatch.setattr(main.sentry_sdk, "init", lambda **kwargs: called.__setitem__("init", True))
+    monkeypatch.setattr(main.asyncio, "run", lambda coro: None)
+
+    main.main()
+
+    assert called["init"] is False
+
+
+def test_main_inits_sentry_with_dsn_when_set(monkeypatch):
+    """SENTRY_DSN 設定時、その値で sentry_sdk.init が呼ばれる。"""
+    monkeypatch.setenv("SENTRY_DSN", "https://example@glitchtip.example/1")
+    monkeypatch.setenv("DOT_APP_API_TOKEN", "dummy-token")
+    monkeypatch.setenv("DOT_DEVICE_ID", "dummy-device-id")
+
+    captured = {}
+    monkeypatch.setattr(
+        main.sentry_sdk, "init", lambda **kwargs: captured.update(kwargs)
+    )
+    monkeypatch.setattr(main.asyncio, "run", lambda coro: None)
+
+    main.main()
+
+    assert captured["dsn"] == "https://example@glitchtip.example/1"

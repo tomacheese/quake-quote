@@ -9,7 +9,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
+
+import sentry_sdk
+from sentry_sdk.integrations.logging import LoggingIntegration
 
 from config import Config, ConfigError, load_config
 from earthquake_source import EarthquakeStream, fetch_seed_earthquakes
@@ -106,6 +110,15 @@ async def run(config: Config) -> None:
 
 def main() -> None:
     """設定を読み込み、asyncioイベントループを起動する。"""
+    sentry_dsn = os.environ.get("SENTRY_DSN")
+    if sentry_dsn:
+        sentry_sdk.init(
+            dsn=sentry_dsn,
+            integrations=[
+                LoggingIntegration(level=logging.INFO, event_level=logging.ERROR)
+            ],
+        )
+
     try:
         config = load_config()
     except ConfigError as error:
