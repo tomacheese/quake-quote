@@ -9,7 +9,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
+
+import sentry_sdk
+from sentry_sdk.integrations.logging import LoggingIntegration
 
 from config import Config, ConfigError, load_config
 from earthquake_source import EarthquakeStream, fetch_seed_earthquakes
@@ -104,15 +108,43 @@ async def run(config: Config) -> None:
             logger.info("push 最小間隔内のため、今回の新着は描画を保留します。")
 
 
+def _scrub_breadcrumb(crumb: dict, hint: dict) -> dict:
+    """breadcrumb の message を切り詰め、APIレスポンス本文等の混入量を抑える。
+
+    push-image失敗時の logger.warning はHTTPレスポンス本文をそのまま含むため、
+    breadcrumb化した際に外部送信されるデータ量を無制限にしないための対策。
+    """
+    message = crumb.get("message")
+    if message is not None:
+        crumb["message"] = message[:200]
+    return crumb
+
+
 def main() -> None:
     """設定を読み込み、asyncioイベントループを起動する。"""
+    sentry_dsn = os.environ.get("SENTRY_DSN")
+    if sentry_dsn:
+        sentry_sdk.init(
+            dsn=sentry_dsn,
+            # スタックフレームのローカル変数(APIトークン等)を外部送信しない
+            include_local_variables=False,
+            before_breadcrumb=_scrub_breadcrumb,
+            integrations=[
+                LoggingIntegration(level=logging.INFO, event_level=logging.ERROR)
+            ],
+        )
+
     try:
         config = load_config()
     except ConfigError as error:
         logger.error("設定エラー: %s", error)
         raise SystemExit(1) from error
 
-    asyncio.run(run(config))
+    try:
+        asyncio.run(run(config))
+    except Exception as error:
+        sentry_sdk.capture_exception(error)
+        raise
 
 
 if __name__ == "__main__":

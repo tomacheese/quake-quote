@@ -2,5 +2,5 @@ services:
   app:
     build: .
     env_file: .env
-    restart: always
+    restart: unless-stopped
     init: true
