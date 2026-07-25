@@ -41,6 +41,7 @@ docker compose logs -f
 | `DOT_DEVICE_ID` | 対象デバイスID(必須) | - |
 | `MIN_PUSH_INTERVAL_SEC` | push最小間隔(秒) | `30` |
 | `EARTHQUAKE_ENTRY_COUNT` | 表示件数 | `3` |
+| `SENTRY_DSN` | GlitchTip 等 Sentry 互換のエラートラッキングDSN(任意) | 未設定時は無効 |
 
 ## ローカルでのテスト実行
 
