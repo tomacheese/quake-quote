@@ -180,6 +180,38 @@ def test_main_inits_sentry_with_dsn_when_set(monkeypatch):
     assert captured["dsn"] == "https://example@glitchtip.example/1"
 
 
+def test_main_inits_sentry_with_local_variables_disabled(monkeypatch):
+    """スタックフレームのローカル変数(APIトークン等)を送信しないよう設定される。"""
+    monkeypatch.setenv("SENTRY_DSN", "https://example@glitchtip.example/1")
+    monkeypatch.setenv("DOT_APP_API_TOKEN", "dummy-token")
+    monkeypatch.setenv("DOT_DEVICE_ID", "dummy-device-id")
+
+    captured = {}
+    monkeypatch.setattr(
+        main.sentry_sdk, "init", lambda **kwargs: captured.update(kwargs)
+    )
+    monkeypatch.setattr(main.asyncio, "run", lambda coro: None)
+
+    main.main()
+
+    assert captured["include_local_variables"] is False
+
+
+def test_scrub_breadcrumb_truncates_long_message():
+    """breadcrumb の message が長い場合、一定長に切り詰められる。"""
+    long_message = "x" * 1000
+    crumb = main._scrub_breadcrumb({"message": long_message}, {})
+
+    assert len(crumb["message"]) == 200
+
+
+def test_scrub_breadcrumb_keeps_short_message_unchanged():
+    """breadcrumb の message が短い場合はそのまま保持される。"""
+    crumb = main._scrub_breadcrumb({"message": "short"}, {})
+
+    assert crumb["message"] == "short"
+
+
 def test_main_captures_and_reraises_unhandled_exception(monkeypatch):
     """run() が送出した未捕捉例外は capture_exception した上で再送出される。"""
     monkeypatch.delenv("SENTRY_DSN", raising=False)
