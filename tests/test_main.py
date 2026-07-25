@@ -2,6 +2,8 @@
 import base64
 import logging
 
+import pytest
+
 import main
 from main import Config, should_push
 
@@ -176,3 +178,27 @@ def test_main_inits_sentry_with_dsn_when_set(monkeypatch):
     main.main()
 
     assert captured["dsn"] == "https://example@glitchtip.example/1"
+
+
+def test_main_captures_and_reraises_unhandled_exception(monkeypatch):
+    """run() が送出した未捕捉例外は capture_exception した上で再送出される。"""
+    monkeypatch.delenv("SENTRY_DSN", raising=False)
+    monkeypatch.setenv("DOT_APP_API_TOKEN", "dummy-token")
+    monkeypatch.setenv("DOT_DEVICE_ID", "dummy-device-id")
+
+    captured_errors = []
+    monkeypatch.setattr(
+        main.sentry_sdk, "capture_exception", lambda error: captured_errors.append(error)
+    )
+
+    boom = RuntimeError("boom")
+
+    def _raise_boom(coro):
+        raise boom
+
+    monkeypatch.setattr(main.asyncio, "run", _raise_boom)
+
+    with pytest.raises(RuntimeError, match="boom"):
+        main.main()
+
+    assert captured_errors == [boom]

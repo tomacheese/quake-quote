@@ -125,7 +125,11 @@ def main() -> None:
         logger.error("設定エラー: %s", error)
         raise SystemExit(1) from error
 
-    asyncio.run(run(config))
+    try:
+        asyncio.run(run(config))
+    except Exception as error:
+        sentry_sdk.capture_exception(error)
+        raise
 
 
 if __name__ == "__main__":
