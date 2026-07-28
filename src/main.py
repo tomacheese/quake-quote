@@ -48,17 +48,13 @@ def _push_image_with_retry(
 ) -> requests.Response:
     """client.push_image() を requests のトランスポート層例外に対してリトライ付きで呼ぶ。
 
-    requests.exceptions.RequestException (ConnectTimeout/ReadTimeout に限らず、
-    SSLError 等のトランスポート層例外全般を含む)が発生した場合、
-    PUSH_IMAGE_BACKOFF_SEC の待機を挟みながら
-    最大 PUSH_IMAGE_MAX_ATTEMPTS 回まで再試行する。
-    全試行が失敗した場合は最後に捕捉した例外をそのまま送出する
-    (呼び出し側で最終的な諦め処理を行う)。
+    捕捉対象は requests.exceptions.RequestException(ConnectTimeout/ReadTimeout
+    に限らず、SSLError 等のトランスポート層例外全般を含む)。
+    全試行が失敗した場合は最後に捕捉した例外をそのまま送出し、
+    最終的な諦め処理は呼び出し側に委ねる。
 
-    DEFAULT_TIMEOUT (10秒)は connect/read それぞれに独立して掛かりうるため、
-    1回の試行の最悪値は最大約20秒。
-    3試行 + backoff(1秒+2秒)により、
-    本関数単体の最悪ブロック時間は最大約63秒に達しうる
+    quote0_client.DEFAULT_TIMEOUT が connect/read それぞれに独立して掛かるため、
+    試行回数・待機時間を増やすほど1回の呼び出しの最悪ブロック時間も伸びる
     (この関数の外側で行われる get_current_image() の通信時間は含まない)。
     """
     for attempt in range(1, PUSH_IMAGE_MAX_ATTEMPTS + 1):
@@ -106,7 +102,7 @@ def push_rows(
       次に新着の地震イベントが WebSocket から届くまで再試行されない
       (定期的な再試行タイマーは持たない)。
     - リトライ導入により、本関数1回の呼び出しの最悪ブロック時間は
-      get_current_image() の通信時間を含めて数十秒〜最大約100秒に達しうる。
+      get_current_image() の通信時間を含めて従来より伸びる。
       asyncio.to_thread 経由のためイベントループ自体はブロックしないが、
       WebSocket 受信ループの次の処理は遅延する。
 
