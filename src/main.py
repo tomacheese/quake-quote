@@ -12,6 +12,7 @@ import logging
 import os
 import time
 
+import requests
 import sentry_sdk
 from sentry_sdk.integrations.logging import LoggingIntegration
 
@@ -32,6 +33,49 @@ def should_push(last_push_at: float | None, now: float, min_interval_sec: int) -
     if last_push_at is None:
         return True
     return (now - last_push_at) >= min_interval_sec
+
+
+# push_image() の通信例外に対するリトライ設定。
+# 最大 PUSH_IMAGE_MAX_ATTEMPTS 回試行し、リトライ前に PUSH_IMAGE_BACKOFF_SEC の
+# 順で待機する(指数バックオフ)。環境変数化はせずハードコードする。
+PUSH_IMAGE_MAX_ATTEMPTS: int = 3
+PUSH_IMAGE_BACKOFF_SEC: tuple[int, int] = (1, 2)
+
+
+def _push_image_with_retry(
+    client: Quote0Client, config: Config, image_b64: str
+) -> requests.Response:
+    """client.push_image() を通信例外に対してリトライ付きで呼ぶ。
+
+    requests.exceptions.RequestException (ConnectTimeout/ReadTimeout等) が
+    発生した場合、PUSH_IMAGE_BACKOFF_SEC の待機を挟みながら最大
+    PUSH_IMAGE_MAX_ATTEMPTS 回まで再試行する。全試行が失敗した場合は
+    最後に捕捉した例外をそのまま送出する(呼び出し側で最終的な諦め処理を行う)。
+    """
+    last_error: requests.exceptions.RequestException | None = None
+    for attempt in range(1, PUSH_IMAGE_MAX_ATTEMPTS + 1):
+        try:
+            return client.push_image(
+                config.device_id,
+                refreshNow=True,
+                image=f"data:image/png;base64,{image_b64}",
+                border=0,
+                ditherType="NONE",
+            )
+        except requests.exceptions.RequestException as error:
+            last_error = error
+            if attempt < PUSH_IMAGE_MAX_ATTEMPTS:
+                wait_sec = PUSH_IMAGE_BACKOFF_SEC[attempt - 1]
+                logger.warning(
+                    "push-image の通信に失敗しました(%d回目): %s. %d秒後にリトライします。",
+                    attempt,
+                    error,
+                    wait_sec,
+                )
+                time.sleep(wait_sec)
+
+    assert last_error is not None  # ループが1回も実行されないことはない
+    raise last_error
 
 
 def push_rows(
@@ -61,13 +105,17 @@ def push_rows(
         return last_push_at
 
     image_b64 = image_to_base64_png(img)
-    resp = client.push_image(
-        config.device_id,
-        refreshNow=True,
-        image=f"data:image/png;base64,{image_b64}",
-        border=0,
-        ditherType="NONE",
-    )
+    try:
+        resp = _push_image_with_retry(client, config, image_b64)
+    except requests.exceptions.RequestException as error:
+        logger.warning(
+            "push-image の通信に%d回失敗したため今回のpushを諦めました: %s",
+            PUSH_IMAGE_MAX_ATTEMPTS,
+            error,
+        )
+        sentry_sdk.capture_exception(error)
+        return last_push_at
+
     if resp.status_code >= 400:
         logger.warning(
             "push-image に失敗しました: HTTP %s %s", resp.status_code, resp.text

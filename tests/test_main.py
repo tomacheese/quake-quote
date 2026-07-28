@@ -234,3 +234,73 @@ def test_main_captures_and_reraises_unhandled_exception(monkeypatch):
         main.main()
 
     assert captured_errors == [boom]
+
+
+def test_push_retries_on_request_exception_then_succeeds(monkeypatch):
+    """push_image が2回失敗し3回目で成功した場合、リトライの上でpush成功として扱う。"""
+    config = _make_config()
+    rows = [{"time": "01/01 00:00", "anm": "テスト", "mag": "3", "maxi": "1", "coord": None}]
+
+    monkeypatch.setattr(main, "render_image", lambda rows: "FAKE_IMAGE")
+    monkeypatch.setattr(main, "image_to_base64_png", lambda img: "base64data")
+    monkeypatch.setattr(main.time, "monotonic", lambda: 123.0)
+
+    sleep_calls = []
+    monkeypatch.setattr(main.time, "sleep", lambda sec: sleep_calls.append(sec))
+
+    class _FakeResp:
+        status_code = 200
+        text = ""
+
+    call_count = {"n": 0}
+
+    class _FakeClient:
+        def get_current_image(self, device_id):
+            return None
+
+        def push_image(self, device_id, **options):
+            call_count["n"] += 1
+            if call_count["n"] < 3:
+                raise main.requests.exceptions.ReadTimeout("timed out")
+            return _FakeResp()
+
+    result_last_push_at = main.push_rows(_FakeClient(), config, rows, last_push_at=None)
+
+    assert call_count["n"] == 3
+    assert result_last_push_at == 123.0
+    assert sleep_calls == [1, 2]
+
+
+def test_push_gives_up_after_max_retries_and_reports_to_sentry(monkeypatch):
+    """push_image が3回とも失敗した場合、Sentryへ送信した上でlast_push_atは変更されない。"""
+    config = _make_config()
+    rows = [{"time": "01/01 00:00", "anm": "テスト", "mag": "3", "maxi": "1", "coord": None}]
+
+    monkeypatch.setattr(main, "render_image", lambda rows: "FAKE_IMAGE")
+    monkeypatch.setattr(main, "image_to_base64_png", lambda img: "base64data")
+
+    sleep_calls = []
+    monkeypatch.setattr(main.time, "sleep", lambda sec: sleep_calls.append(sec))
+
+    captured_errors = []
+    monkeypatch.setattr(
+        main.sentry_sdk, "capture_exception", lambda error: captured_errors.append(error)
+    )
+
+    call_count = {"n": 0}
+
+    class _FakeClient:
+        def get_current_image(self, device_id):
+            return None
+
+        def push_image(self, device_id, **options):
+            call_count["n"] += 1
+            raise main.requests.exceptions.ConnectTimeout("connect timed out")
+
+    result_last_push_at = main.push_rows(_FakeClient(), config, rows, last_push_at=99.0)
+
+    assert call_count["n"] == 3
+    assert sleep_calls == [1, 2]
+    assert len(captured_errors) == 1
+    assert isinstance(captured_errors[0], main.requests.exceptions.ConnectTimeout)
+    assert result_last_push_at == 99.0
