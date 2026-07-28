@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import time
 
 import requests
@@ -35,24 +36,31 @@ def should_push(last_push_at: float | None, now: float, min_interval_sec: int) -
     return (now - last_push_at) >= min_interval_sec
 
 
-# push_image() の通信例外に対するリトライ設定。
-# 最大 PUSH_IMAGE_MAX_ATTEMPTS 回試行し、リトライ前に PUSH_IMAGE_BACKOFF_SEC の
-# 順で待機する(指数バックオフ)。環境変数化はせずハードコードする。
-PUSH_IMAGE_MAX_ATTEMPTS: int = 3
-PUSH_IMAGE_BACKOFF_SEC: tuple[int, int] = (1, 2)
+# 環境変数化はせずハードコードする
+# (Issue #14 にリトライ回数・待機時間を可変にする要望はなく、
+# YAGNI により追加の設定項目は導入しない)。
+PUSH_IMAGE_BACKOFF_SEC: tuple[int, ...] = (1, 2)
+PUSH_IMAGE_MAX_ATTEMPTS: int = len(PUSH_IMAGE_BACKOFF_SEC) + 1
 
 
 def _push_image_with_retry(
     client: Quote0Client, config: Config, image_b64: str
 ) -> requests.Response:
-    """client.push_image() を通信例外に対してリトライ付きで呼ぶ。
+    """client.push_image() を requests のトランスポート層例外に対してリトライ付きで呼ぶ。
 
-    requests.exceptions.RequestException (ConnectTimeout/ReadTimeout等) が
-    発生した場合、PUSH_IMAGE_BACKOFF_SEC の待機を挟みながら最大
-    PUSH_IMAGE_MAX_ATTEMPTS 回まで再試行する。全試行が失敗した場合は
-    最後に捕捉した例外をそのまま送出する(呼び出し側で最終的な諦め処理を行う)。
+    requests.exceptions.RequestException (ConnectTimeout/ReadTimeout に限らず、
+    SSLError 等のトランスポート層例外全般を含む)が発生した場合、
+    PUSH_IMAGE_BACKOFF_SEC の待機を挟みながら
+    最大 PUSH_IMAGE_MAX_ATTEMPTS 回まで再試行する。
+    全試行が失敗した場合は最後に捕捉した例外をそのまま送出する
+    (呼び出し側で最終的な諦め処理を行う)。
+
+    DEFAULT_TIMEOUT (10秒)は connect/read それぞれに独立して掛かりうるため、
+    1回の試行の最悪値は最大約20秒。
+    3試行 + backoff(1秒+2秒)により、
+    本関数単体の最悪ブロック時間は最大約63秒に達しうる
+    (この関数の外側で行われる get_current_image() の通信時間は含まない)。
     """
-    last_error: requests.exceptions.RequestException | None = None
     for attempt in range(1, PUSH_IMAGE_MAX_ATTEMPTS + 1):
         try:
             return client.push_image(
@@ -63,19 +71,16 @@ def _push_image_with_retry(
                 ditherType="NONE",
             )
         except requests.exceptions.RequestException as error:
-            last_error = error
-            if attempt < PUSH_IMAGE_MAX_ATTEMPTS:
-                wait_sec = PUSH_IMAGE_BACKOFF_SEC[attempt - 1]
-                logger.warning(
-                    "push-image の通信に失敗しました(%d回目): %s. %d秒後にリトライします。",
-                    attempt,
-                    error,
-                    wait_sec,
-                )
-                time.sleep(wait_sec)
-
-    assert last_error is not None  # ループが1回も実行されないことはない
-    raise last_error
+            if attempt == PUSH_IMAGE_MAX_ATTEMPTS:
+                raise
+            wait_sec = PUSH_IMAGE_BACKOFF_SEC[attempt - 1]
+            logger.warning(
+                "push-image の通信に失敗しました(%d回目): %s. %d秒後にリトライします。",
+                attempt,
+                error,
+                wait_sec,
+            )
+            time.sleep(wait_sec)
 
 
 def push_rows(
@@ -93,6 +98,18 @@ def push_rows(
     HTTP 通信を伴う同期処理のため、呼び出し側は asyncio.to_thread 経由で
     呼び出し、イベントループをブロックしないこと。
 
+    既知の残存トレードオフ(Issue #14 のスコープ外、意図的に許容):
+    - リトライは非冪等な POST に対して行われるため、
+      ReadTimeout 等でサーバーが実際にはリクエストを受理済みだった場合、
+      実機側で画面更新が二重に発生することがある。
+    - 全試行が失敗した場合 last_push_at を更新しないため、
+      次に新着の地震イベントが WebSocket から届くまで再試行されない
+      (定期的な再試行タイマーは持たない)。
+    - リトライ導入により、本関数1回の呼び出しの最悪ブロック時間は
+      get_current_image() の通信時間を含めて数十秒〜最大約100秒に達しうる。
+      asyncio.to_thread 経由のためイベントループ自体はブロックしないが、
+      WebSocket 受信ループの次の処理は遅延する。
+
     Returns:
         push を実行して成功した場合は更新後の last_push_at、
         スキップした場合や失敗した場合は引数の last_push_at をそのまま返す。
@@ -109,7 +126,7 @@ def push_rows(
         resp = _push_image_with_retry(client, config, image_b64)
     except requests.exceptions.RequestException as error:
         logger.warning(
-            "push-image の通信に%d回失敗したため今回のpushを諦めました: %s",
+            "push-image の通信に%d回失敗したため今回の push を諦めました: %s",
             PUSH_IMAGE_MAX_ATTEMPTS,
             error,
         )
@@ -119,6 +136,11 @@ def push_rows(
     if resp.status_code >= 400:
         logger.warning(
             "push-image に失敗しました: HTTP %s %s", resp.status_code, resp.text
+        )
+        # 通信例外による諦め(上のブロック)と同様に、恒久的な失敗(誤設定等)も
+        # 運用上の可視性を揃えるため Sentry に送信する。
+        sentry_sdk.capture_message(
+            f"push-image に失敗しました: HTTP {resp.status_code}", level="warning"
         )
         return last_push_at
 
@@ -156,6 +178,24 @@ async def run(config: Config) -> None:
             logger.info("push 最小間隔内のため、今回の新着は描画を保留します。")
 
 
+_DEVICE_ID_URL_PATTERN = re.compile(r"(/device/)[^/\s\"']+")
+
+
+def _scrub_event(event: dict, hint: dict) -> dict:
+    """例外メッセージ中の URL に含まれる device_id をマスクする。
+
+    push-image 失敗時に capture する requests 例外のメッセージ文字列は
+    リクエスト URL(device_id を含む)をそのまま含むことがあるため、
+    include_local_variables=False と同じ意図で、送信前に URL 中の
+    device_id セグメントを除去する。
+    """
+    for exc in event.get("exception", {}).get("values", []) or []:
+        value = exc.get("value")
+        if value:
+            exc["value"] = _DEVICE_ID_URL_PATTERN.sub(r"\1<redacted>", value)
+    return event
+
+
 def _scrub_breadcrumb(crumb: dict, hint: dict) -> dict:
     """breadcrumb の message を切り詰め、APIレスポンス本文等の混入量を抑える。
 
@@ -176,6 +216,7 @@ def main() -> None:
             dsn=sentry_dsn,
             # スタックフレームのローカル変数(APIトークン等)を外部送信しない
             include_local_variables=False,
+            before_send=_scrub_event,
             before_breadcrumb=_scrub_breadcrumb,
             integrations=[
                 LoggingIntegration(level=logging.INFO, event_level=logging.ERROR)
