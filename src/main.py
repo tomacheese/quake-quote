@@ -10,8 +10,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import time
 
+import requests
 import sentry_sdk
 from sentry_sdk.integrations.logging import LoggingIntegration
 
@@ -34,6 +36,49 @@ def should_push(last_push_at: float | None, now: float, min_interval_sec: int) -
     return (now - last_push_at) >= min_interval_sec
 
 
+# 環境変数化はせずハードコードする
+# (Issue #14 にリトライ回数・待機時間を可変にする要望はなく、
+# YAGNI により追加の設定項目は導入しない)。
+PUSH_IMAGE_BACKOFF_SEC: tuple[int, ...] = (1, 2)
+PUSH_IMAGE_MAX_ATTEMPTS: int = len(PUSH_IMAGE_BACKOFF_SEC) + 1
+
+
+def _push_image_with_retry(
+    client: Quote0Client, config: Config, image_b64: str
+) -> requests.Response:
+    """client.push_image() を requests のトランスポート層例外に対してリトライ付きで呼ぶ。
+
+    捕捉対象は requests.exceptions.RequestException(ConnectTimeout/ReadTimeout
+    に限らず、SSLError 等のトランスポート層例外全般を含む)。
+    全試行が失敗した場合は最後に捕捉した例外をそのまま送出し、
+    最終的な諦め処理は呼び出し側に委ねる。
+
+    quote0_client.DEFAULT_TIMEOUT が connect/read それぞれに独立して掛かるため、
+    試行回数・待機時間を増やすほど1回の呼び出しの最悪ブロック時間も伸びる
+    (この関数の外側で行われる get_current_image() の通信時間は含まない)。
+    """
+    for attempt in range(1, PUSH_IMAGE_MAX_ATTEMPTS + 1):
+        try:
+            return client.push_image(
+                config.device_id,
+                refreshNow=True,
+                image=f"data:image/png;base64,{image_b64}",
+                border=0,
+                ditherType="NONE",
+            )
+        except requests.exceptions.RequestException as error:
+            if attempt == PUSH_IMAGE_MAX_ATTEMPTS:
+                raise
+            wait_sec = PUSH_IMAGE_BACKOFF_SEC[attempt - 1]
+            logger.warning(
+                "push-image の通信に失敗しました(%d回目): %s. %d秒後にリトライします。",
+                attempt,
+                error,
+                wait_sec,
+            )
+            time.sleep(wait_sec)
+
+
 def push_rows(
     client: Quote0Client,
     config: Config,
@@ -49,6 +94,18 @@ def push_rows(
     HTTP 通信を伴う同期処理のため、呼び出し側は asyncio.to_thread 経由で
     呼び出し、イベントループをブロックしないこと。
 
+    既知の残存トレードオフ(Issue #14 のスコープ外、意図的に許容):
+    - リトライは非冪等な POST に対して行われるため、
+      ReadTimeout 等でサーバーが実際にはリクエストを受理済みだった場合、
+      実機側で画面更新が二重に発生することがある。
+    - 全試行が失敗した場合 last_push_at を更新しないため、
+      次に新着の地震イベントが WebSocket から届くまで再試行されない
+      (定期的な再試行タイマーは持たない)。
+    - リトライ導入により、本関数1回の呼び出しの最悪ブロック時間は
+      get_current_image() の通信時間を含めて従来より伸びる。
+      asyncio.to_thread 経由のためイベントループ自体はブロックしないが、
+      WebSocket 受信ループの次の処理は遅延する。
+
     Returns:
         push を実行して成功した場合は更新後の last_push_at、
         スキップした場合や失敗した場合は引数の last_push_at をそのまま返す。
@@ -61,16 +118,25 @@ def push_rows(
         return last_push_at
 
     image_b64 = image_to_base64_png(img)
-    resp = client.push_image(
-        config.device_id,
-        refreshNow=True,
-        image=f"data:image/png;base64,{image_b64}",
-        border=0,
-        ditherType="NONE",
-    )
+    try:
+        resp = _push_image_with_retry(client, config, image_b64)
+    except requests.exceptions.RequestException as error:
+        logger.warning(
+            "push-image の通信に%d回失敗したため今回の push を諦めました: %s",
+            PUSH_IMAGE_MAX_ATTEMPTS,
+            error,
+        )
+        sentry_sdk.capture_exception(error)
+        return last_push_at
+
     if resp.status_code >= 400:
         logger.warning(
             "push-image に失敗しました: HTTP %s %s", resp.status_code, resp.text
+        )
+        # 通信例外による諦め(上のブロック)と同様に、恒久的な失敗(誤設定等)も
+        # 運用上の可視性を揃えるため Sentry に送信する。
+        sentry_sdk.capture_message(
+            f"push-image に失敗しました: HTTP {resp.status_code}", level="warning"
         )
         return last_push_at
 
@@ -108,6 +174,24 @@ async def run(config: Config) -> None:
             logger.info("push 最小間隔内のため、今回の新着は描画を保留します。")
 
 
+_DEVICE_ID_URL_PATTERN = re.compile(r"(/device/)[^/\s\"']+")
+
+
+def _scrub_event(event: dict, hint: dict) -> dict:
+    """例外メッセージ中の URL に含まれる device_id をマスクする。
+
+    push-image 失敗時に capture する requests 例外のメッセージ文字列は
+    リクエスト URL(device_id を含む)をそのまま含むことがあるため、
+    include_local_variables=False と同じ意図で、送信前に URL 中の
+    device_id セグメントを除去する。
+    """
+    for exc in event.get("exception", {}).get("values", []) or []:
+        value = exc.get("value")
+        if value:
+            exc["value"] = _DEVICE_ID_URL_PATTERN.sub(r"\1<redacted>", value)
+    return event
+
+
 def _scrub_breadcrumb(crumb: dict, hint: dict) -> dict:
     """breadcrumb の message を切り詰め、APIレスポンス本文等の混入量を抑える。
 
@@ -128,6 +212,7 @@ def main() -> None:
             dsn=sentry_dsn,
             # スタックフレームのローカル変数(APIトークン等)を外部送信しない
             include_local_variables=False,
+            before_send=_scrub_event,
             before_breadcrumb=_scrub_breadcrumb,
             integrations=[
                 LoggingIntegration(level=logging.INFO, event_level=logging.ERROR)

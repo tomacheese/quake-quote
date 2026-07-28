@@ -234,3 +234,162 @@ def test_main_captures_and_reraises_unhandled_exception(monkeypatch):
         main.main()
 
     assert captured_errors == [boom]
+
+
+def test_push_retries_on_request_exception_then_succeeds(monkeypatch):
+    """push_image が 2 回失敗し 3 回目で成功した場合、リトライの上で push 成功として扱う。"""
+    config = _make_config()
+    rows = [{"time": "01/01 00:00", "anm": "テスト", "mag": "3", "maxi": "1", "coord": None}]
+
+    monkeypatch.setattr(main, "render_image", lambda rows: "FAKE_IMAGE")
+    monkeypatch.setattr(main, "image_to_base64_png", lambda img: "base64data")
+    monkeypatch.setattr(main.time, "monotonic", lambda: 123.0)
+
+    sleep_calls = []
+    monkeypatch.setattr(main.time, "sleep", lambda sec: sleep_calls.append(sec))
+
+    captured_errors = []
+    monkeypatch.setattr(
+        main.sentry_sdk, "capture_exception", lambda error: captured_errors.append(error)
+    )
+
+    class _FakeResp:
+        status_code = 200
+        text = ""
+
+    call_count = {"n": 0}
+
+    class _FakeClient:
+        def get_current_image(self, device_id):
+            return None
+
+        def push_image(self, device_id, **options):
+            call_count["n"] += 1
+            if call_count["n"] < 3:
+                raise main.requests.exceptions.ReadTimeout("timed out")
+            return _FakeResp()
+
+    result_last_push_at = main.push_rows(_FakeClient(), config, rows, last_push_at=None)
+
+    assert call_count["n"] == 3
+    assert result_last_push_at == 123.0
+    assert sleep_calls == [1, 2]
+    assert captured_errors == []
+
+
+def test_push_gives_up_after_max_retries_and_reports_to_sentry(monkeypatch):
+    """push_image が 3 回とも失敗した場合、Sentry へ送信した上で last_push_at は変更されない。"""
+    config = _make_config()
+    rows = [{"time": "01/01 00:00", "anm": "テスト", "mag": "3", "maxi": "1", "coord": None}]
+
+    monkeypatch.setattr(main, "render_image", lambda rows: "FAKE_IMAGE")
+    monkeypatch.setattr(main, "image_to_base64_png", lambda img: "base64data")
+
+    sleep_calls = []
+    monkeypatch.setattr(main.time, "sleep", lambda sec: sleep_calls.append(sec))
+
+    captured_errors = []
+    monkeypatch.setattr(
+        main.sentry_sdk, "capture_exception", lambda error: captured_errors.append(error)
+    )
+
+    call_count = {"n": 0}
+
+    class _FakeClient:
+        def get_current_image(self, device_id):
+            return None
+
+        def push_image(self, device_id, **options):
+            call_count["n"] += 1
+            raise main.requests.exceptions.ConnectTimeout("connect timed out")
+
+    result_last_push_at = main.push_rows(_FakeClient(), config, rows, last_push_at=99.0)
+
+    assert call_count["n"] == 3
+    assert sleep_calls == [1, 2]
+    assert len(captured_errors) == 1
+    assert isinstance(captured_errors[0], main.requests.exceptions.ConnectTimeout)
+    assert result_last_push_at == 99.0
+
+
+def test_push_reports_http_error_status_to_sentry_too(monkeypatch):
+    """push-image が HTTP 4xx/5xx を返した場合も、通信例外と同様に Sentry へ送信される。"""
+    config = _make_config()
+    rows = [{"time": "01/01 00:00", "anm": "テスト", "mag": "3", "maxi": "1", "coord": None}]
+
+    monkeypatch.setattr(main, "render_image", lambda rows: "FAKE_IMAGE")
+    monkeypatch.setattr(main, "image_to_base64_png", lambda img: "base64data")
+
+    captured_messages = []
+    monkeypatch.setattr(
+        main.sentry_sdk,
+        "capture_message",
+        lambda message, level=None: captured_messages.append((message, level)),
+    )
+
+    class _FakeResp:
+        status_code = 404
+        text = "not found"
+
+    class _FakeClient:
+        def get_current_image(self, device_id):
+            return None
+
+        def push_image(self, device_id, **options):
+            return _FakeResp()
+
+    result_last_push_at = main.push_rows(_FakeClient(), config, rows, last_push_at=42.0)
+
+    assert len(captured_messages) == 1
+    message, level = captured_messages[0]
+    assert "404" in message
+    assert level == "warning"
+    assert result_last_push_at == 42.0
+
+
+def test_scrub_event_masks_device_id_in_exception_message():
+    """例外メッセージ中の URL に含まれる device_id がマスクされる。"""
+    event = {
+        "exception": {
+            "values": [
+                {
+                    "value": (
+                        "Max retries exceeded with url: "
+                        "/authV2/open/device/abc123/image"
+                    )
+                }
+            ]
+        }
+    }
+
+    result = main._scrub_event(event, {})
+
+    scrubbed_value = result["exception"]["values"][0]["value"]
+    assert "abc123" not in scrubbed_value
+    assert "/device/<redacted>" in scrubbed_value
+
+
+def test_scrub_event_ignores_events_without_exception():
+    """exception フィールドを持たないイベントでもエラーにならない。"""
+    event = {"message": "no exception here"}
+
+    result = main._scrub_event(event, {})
+
+    assert result == {"message": "no exception here"}
+
+
+def test_main_inits_sentry_with_before_send_scrubber(monkeypatch):
+    """sentry_sdk.init に device_id スクラブ用の before_send が設定される。"""
+    monkeypatch.setenv("SENTRY_DSN", "https://example@glitchtip.example/1")
+    monkeypatch.setenv("DOT_APP_API_TOKEN", "dummy-token")
+    monkeypatch.setenv("DOT_DEVICE_ID", "dummy-device-id")
+
+    captured = {}
+    monkeypatch.setattr(
+        main.sentry_sdk, "init", lambda **kwargs: captured.update(kwargs)
+    )
+    monkeypatch.setattr(main.asyncio, "run", lambda coro: None)
+
+    main.main()
+
+    assert captured["before_send"] is main._scrub_event
