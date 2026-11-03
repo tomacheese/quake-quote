@@ -36,9 +36,8 @@ def should_push(last_push_at: float | None, now: float, min_interval_sec: int) -
     return (now - last_push_at) >= min_interval_sec
 
 
-# 環境変数化はせずハードコードする
-# (Issue #14 にリトライ回数・待機時間を可変にする要望はなく、
-# YAGNI により追加の設定項目は導入しない)。
+# リトライ回数・待機時間を可変にする要望がないため、
+# 環境変数化せずハードコードする。
 PUSH_IMAGE_BACKOFF_SEC: tuple[int, ...] = (1, 2)
 PUSH_IMAGE_MAX_ATTEMPTS: int = len(PUSH_IMAGE_BACKOFF_SEC) + 1
 
@@ -94,7 +93,7 @@ def push_rows(
     HTTP 通信を伴う同期処理のため、呼び出し側は asyncio.to_thread 経由で
     呼び出し、イベントループをブロックしないこと。
 
-    既知の残存トレードオフ(Issue #14 のスコープ外、意図的に許容):
+    既知の残存トレードオフ(意図的に許容している):
     - リトライは非冪等な POST に対して行われるため、
       ReadTimeout 等でサーバーが実際にはリクエストを受理済みだった場合、
       実機側で画面更新が二重に発生することがある。
