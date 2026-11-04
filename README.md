@@ -19,6 +19,8 @@ quake-quote/
 │   ├── earthquake_source.py   # JMA初期値取得 + P2P地震情報WS受信
 │   └── render.py               # 画像描画ロジック
 ├── tests/                    # pytest
+├── docs/                     # Quote/0 API 調査メモ・地震情報取得元の仕様
+├── AGENTS.md                 # 開発者・AI エージェント向けの規約と不変条件
 ├── Dockerfile / entrypoint.sh / docker-compose.yml
 └── requirements.txt / requirements-dev.txt
 ```
