@@ -244,3 +244,39 @@ def test_listen_logs_on_successful_connect(monkeypatch, caplog):
     assert any(
         "WebSocket に接続しました" in record.message for record in caplog.records
     )
+
+
+@pytest.mark.parametrize("bad_message", [
+    json.dumps({"code": 551, "earthquake": {
+        "time": "not-a-time", "hypocenter": {"name": "浦河沖"},
+    }}),
+    json.dumps([1, 2, 3]),
+    json.dumps({"code": 551, "earthquake": {
+        "time": 123, "hypocenter": {"name": "浦河沖"},
+    }}),
+    json.dumps({"code": 551, "earthquake": ["x"]}),
+])
+def test_listen_skips_malformed_message_and_continues(
+    monkeypatch, caplog, bad_message,
+):
+    """不正な time や配列ルートの JSON を受信してもループを継続し、後続を処理する。"""
+    good = json.dumps({
+        "code": 551,
+        "earthquake": {
+            "time": "2026/07/11 12:34:00",
+            "hypocenter": {"name": "浦河沖"},
+        },
+    })
+    fake_ws = _FakeWebSocket([bad_message, good])
+    monkeypatch.setattr(earthquake_source.websockets, "connect", lambda url: fake_ws)
+
+    async def _consume_one():
+        return await EarthquakeStream().listen().__anext__()
+
+    caplog.set_level(logging.WARNING)
+
+    assert asyncio.run(_consume_one())["anm"] == "浦河沖"
+    assert any(
+        "メッセージの変換に失敗しました" in record.message
+        for record in caplog.records
+    )

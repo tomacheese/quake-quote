@@ -182,12 +182,14 @@ class EarthquakeStream:
                         except json.JSONDecodeError:
                             logger.warning("不正なJSONを受信しました: %s", raw)
                             continue
-                        if message.get("code") != EARTHQUAKE_CODE:
-                            continue
                         try:
-                            yield normalize_p2pquake_message(message)
-                        except NormalizationError as error:
+                            if message.get("code") != EARTHQUAKE_CODE:
+                                continue
+                            row = normalize_p2pquake_message(message)
+                        except (ValueError, AttributeError, TypeError) as error:
                             logger.warning("メッセージの変換に失敗しました: %s", error)
+                            continue
+                        yield row
             except (websockets.exceptions.WebSocketException, OSError) as error:
                 backoff = next_backoff_seconds(backoff)
                 logger.warning(
