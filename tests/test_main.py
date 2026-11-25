@@ -431,3 +431,75 @@ def test_main_inits_sentry_with_before_send_scrubber(monkeypatch):
     main.main()
 
     assert captured["before_send"] is main._scrub_event
+
+
+@pytest.mark.parametrize("additional_row", [False, True])
+def test_pending_rows_are_pushed_at_deadline_without_another_event(
+    monkeypatch, additional_row
+):
+    import asyncio
+    from types import SimpleNamespace
+
+    async def scenario():
+        clock = SimpleNamespace(now=100.0)
+        queue = asyncio.Queue()
+        pushed = []
+        deadline = asyncio.Event()
+        delays = []
+        original_sleep = asyncio.sleep
+
+        class FakeStream:
+            async def listen(self):
+                while True:
+                    yield await queue.get()
+
+        async def fake_sleep(delay):
+            if delay <= 0:
+                await original_sleep(0)
+            else:
+                delays.append(delay)
+                await deadline.wait()
+
+        async def fake_to_thread(function, client, config, rows, last_push_at):
+            pushed.append((clock.now, list(rows)))
+            return clock.now
+
+        monkeypatch.setattr(
+            main, "time", SimpleNamespace(monotonic=lambda: clock.now)
+        )
+        monkeypatch.setattr(main, "fetch_seed_earthquakes", lambda count: [])
+        monkeypatch.setattr(main, "Quote0Client", lambda token: object())
+        monkeypatch.setattr(main, "EarthquakeStream", FakeStream)
+        monkeypatch.setattr(main.asyncio, "to_thread", fake_to_thread)
+        monkeypatch.setattr(main.asyncio, "sleep", fake_sleep)
+        task = asyncio.create_task(main.run(_make_config()))
+        try:
+            await queue.put({"id": 1})
+            for _ in range(10):
+                await original_sleep(0)
+            clock.now = 110.0
+            await queue.put({"id": 2})
+            for _ in range(10):
+                await original_sleep(0)
+            assert pushed == [(100.0, [{"id": 1}])]
+            assert delays == [20.0]
+            if additional_row:
+                clock.now = 120.0
+                await queue.put({"id": 3})
+                for _ in range(10):
+                    await original_sleep(0)
+                assert delays == [20.0]
+            clock.now = 130.0
+            deadline.set()
+            for _ in range(10):
+                await original_sleep(0)
+            expected_rows = [{"id": 2}, {"id": 1}]
+            if additional_row:
+                expected_rows.insert(0, {"id": 3})
+            assert pushed == [(100.0, [{"id": 1}]), (130.0, expected_rows)]
+        finally:
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+    asyncio.run(scenario())

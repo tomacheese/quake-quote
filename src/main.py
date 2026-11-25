@@ -8,6 +8,7 @@ P2P地震情報 (https://www.p2pquake.net/) の WebSocket から新着イベン�
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 import logging
 import os
 import re
@@ -163,14 +164,46 @@ async def run(config: Config) -> None:
 
     logger.info("WebSocket 監視を開始します。")
     stream = EarthquakeStream()
-    async for new_row in stream.listen():
-        rows = ([new_row] + rows)[: config.entry_count]
-        if should_push(last_push_at, time.monotonic(), config.min_push_interval_sec):
-            last_push_at = await asyncio.to_thread(
-                push_rows, client, config, rows, last_push_at
+    listener = stream.listen().__aiter__()
+    next_row = asyncio.create_task(anext(listener))
+    deadline = None
+    try:
+        while True:
+            tasks = {next_row}
+            if deadline is not None:
+                tasks.add(deadline)
+            done, _ = await asyncio.wait(
+                tasks, return_when=asyncio.FIRST_COMPLETED
             )
-        else:
-            logger.info("push 最小間隔内のため、今回の新着は描画を保留します。")
+            if next_row in done:
+                try:
+                    new_row = next_row.result()
+                except StopAsyncIteration:
+                    break
+                rows = ([new_row] + rows)[: config.entry_count]
+                next_row = asyncio.create_task(anext(listener))
+                if deadline is None:
+                    delay = 0.0
+                    if last_push_at is not None:
+                        next_push_at = (
+                            last_push_at + config.min_push_interval_sec
+                        )
+                        delay = max(0.0, next_push_at - time.monotonic())
+                    deadline = asyncio.create_task(asyncio.sleep(delay))
+            if deadline is not None and deadline in done:
+                deadline = None
+                last_push_at = await asyncio.to_thread(
+                    push_rows, client, config, rows, last_push_at
+                )
+    finally:
+        next_row.cancel()
+        if deadline is not None:
+            deadline.cancel()
+        for task in (next_row, deadline):
+            if task is not None:
+                with suppress(asyncio.CancelledError, StopAsyncIteration):
+                    await task
+        await listener.aclose()
 
 
 _DEVICE_ID_URL_PATTERN = re.compile(r"(/device/)[^/\s\"']+")
