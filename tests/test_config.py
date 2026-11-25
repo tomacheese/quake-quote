@@ -47,3 +47,34 @@ def test_load_config_reads_overrides(monkeypatch):
     assert config.device_id == "ABCDEF"
     assert config.min_push_interval_sec == 60
     assert config.entry_count == 5
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("EARTHQUAKE_ENTRY_COUNT", "0"),
+        ("EARTHQUAKE_ENTRY_COUNT", "-1"),
+        ("EARTHQUAKE_ENTRY_COUNT", "abc"),
+        ("MIN_PUSH_INTERVAL_SEC", "-1"),
+        ("MIN_PUSH_INTERVAL_SEC", "abc"),
+    ],
+)
+def test_load_config_rejects_invalid_numbers(monkeypatch, name, value):
+    monkeypatch.setenv("DOT_APP_API_TOKEN", "dummy-token")
+    monkeypatch.setenv("DOT_DEVICE_ID", "dummy-device-id")
+    monkeypatch.setenv(name, value)
+
+    with pytest.raises(ConfigError, match=name):
+        load_config()
+
+
+def test_load_config_accepts_minimum_values(monkeypatch):
+    monkeypatch.setenv("DOT_APP_API_TOKEN", "dummy-token")
+    monkeypatch.setenv("DOT_DEVICE_ID", "dummy-device-id")
+    monkeypatch.setenv("EARTHQUAKE_ENTRY_COUNT", "1")
+    monkeypatch.setenv("MIN_PUSH_INTERVAL_SEC", "0")
+
+    config = load_config()
+
+    assert config.entry_count == 1
+    assert config.min_push_interval_sec == 0

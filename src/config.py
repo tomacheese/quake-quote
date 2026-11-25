@@ -26,11 +26,23 @@ class Config:
     entry_count: int
 
 
+def _read_integer(name: str, default: int, minimum: int) -> int:
+    try:
+        value = int(os.environ.get(name) or default)
+    except ValueError as error:
+        raise ConfigError(
+            f"{name} must be an integer >= {minimum}."
+        ) from error
+    if value < minimum:
+        raise ConfigError(f"{name} must be >= {minimum}.")
+    return value
+
+
 def load_config() -> Config:
     """環境変数から設定を読み込む。
 
     Raises:
-        ConfigError: DOT_APP_API_TOKEN または DOT_DEVICE_ID が設定されていない場合。
+        ConfigError: 必須項目が未設定、または数値の設定が不正な場合。
     """
     api_token = os.environ.get("DOT_APP_API_TOKEN")
     if not api_token:
@@ -43,10 +55,10 @@ def load_config() -> Config:
     return Config(
         api_token=api_token,
         device_id=device_id,
-        min_push_interval_sec=int(
-            os.environ.get("MIN_PUSH_INTERVAL_SEC") or DEFAULT_MIN_PUSH_INTERVAL_SEC
+        min_push_interval_sec=_read_integer(
+            "MIN_PUSH_INTERVAL_SEC", DEFAULT_MIN_PUSH_INTERVAL_SEC, 0
         ),
-        entry_count=int(
-            os.environ.get("EARTHQUAKE_ENTRY_COUNT") or DEFAULT_ENTRY_COUNT
+        entry_count=_read_integer(
+            "EARTHQUAKE_ENTRY_COUNT", DEFAULT_ENTRY_COUNT, 1
         ),
     )
